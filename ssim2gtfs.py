@@ -21,6 +21,7 @@ calendar = []
 trips = []
 stoptimes = []
 translations = []
+transfers = {}
 
 wikidata_airlines = {}
 wikidata_airports = {}
@@ -177,6 +178,13 @@ def add_stop(iata_code: str, terminal: str):
                 "record_id": iata_code,
                 "translation": f"{name} ({iata_code})"
             })
+        # minimum 60 min transfer times to avoid nonsense transfers
+        transfers[iata_code] = {
+            "from_stop_id": iata_code,
+            "to_stop_id": iata_code,
+            "transfer_type": 0,
+            "min_transfer_time": 3600,
+        }
     if terminal == "" or f"{iata_code}_{terminal}" in stops:
         return
     stops[f"{iata_code}_{terminal}"] = {
@@ -211,6 +219,7 @@ gtfs_columns = {
     "stop_times.txt": ["trip_id", "departure_time", "arrival_time", "stop_id", "stop_sequence"],
     "translations.txt": ["table_name", "field_name", "language", "record_id", "translation"],
     "feed_info.txt": ["feed_publisher_name", "feed_publisher_url", "feed_lang", "feed_start_date", "feed_end_date"],
+    "transfers.txt": ["from_stop_id", "to_stop_id", "transfer_type", "min_transfer_time"],
 }
 
 
@@ -341,3 +350,4 @@ with zipfile.ZipFile(arguments.out, 'w') as z:
     write_gtfs_file(z, "stop_times.txt", stoptimes)
     write_gtfs_file(z, "translations.txt", translations)
     write_gtfs_file(z, "feed_info.txt", feed_info)
+    write_gtfs_file(z, "transfers.txt", transfers)
