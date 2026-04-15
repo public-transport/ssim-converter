@@ -5,17 +5,20 @@
 
 import argparse
 import csv
+import io
 import json
 import requests
 import os
+import sys
 import urllib.parse
+import zipfile
 
 
 agencies = {}
 stops = {}
 routes = {}
-calendar = {}
-trips = {}
+calendar = []
+trips = []
 stoptimes = []
 translations = []
 
@@ -24,6 +27,12 @@ wikidata_airports = {}
 
 airline_errors = {}
 airport_errors = {}
+
+
+parser = argparse.ArgumentParser(description='SSIM to GTFS converter.')
+parser.add_argument('--ssim', required=True, help='Path to SSIM input file.')
+parser.add_argument('--out', required=True, help='Path to GTFS output file.')
+arguments = parser.parse_args()
 
 
 def query_wikidata(sparql: str, cache_name: str):
@@ -108,6 +117,10 @@ month_map = {
 }
 
 
+def parse_ssim_date(ssim_date: str):
+    return f"20{ssim_date[5:7]}{month_map[ssim_date[2:5]]}{ssim_date[0:2]}"
+
+
 def add_agency(airline_code: str):
     if airline_code in agencies:
         return
@@ -189,6 +202,31 @@ def add_stop(iata_code: str, terminal: str):
         })
 
 
+gtfs_columns = {
+    "agency.txt": ["agency_id", "agency_name", "agency_url", "agency_timezone", "agency_lang"],
+    "stops.txt": ["stop_id", "stop_name", "stop_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url"],
+    "routes.txt": ["route_id", "agency_id", "route_short_name", "route_type"],
+    "calendar.txt": ["service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date"],
+    "trips.txt": ["route_id", "service_id", "trip_id", "trip_headsign", "trip_short_name", "cars_allowed"],
+    "stop_times.txt": ["trip_id", "departure_time", "arrival_time", "stop_id", "stop_sequence"],
+    "translations.txt": ["table_name", "field_name", "language", "record_id", "translation"],
+    "feed_info.txt": ["feed_publisher_name", "feed_publisher_url", "feed_lang", "feed_start_date", "feed_end_date"],
+}
+
+
+def write_gtfs_file(gtfs_zip, file_name: str, data):
+    string_buffer = io.StringIO()
+    writer = csv.DictWriter(string_buffer, fieldnames=gtfs_columns[file_name])
+    writer.writeheader()
+    if isinstance(data, dict):
+        for (_, row) in data.items():
+            writer.writerow(row)
+    else:
+        for row in data:
+            writer.writerow(row)
+    gtfs_zip.writestr(file_name, string_buffer.getvalue())
+
+
 airline_sparql = """
 SELECT DISTINCT ?item ?iataCode ?icaoCode ?label ?url ?dissolved
 WHERE
@@ -219,8 +257,19 @@ WHERE
 parse_wikidata_airports(query_wikidata(airport_sparql, "airports"))
 
 
-with open("af-kl-to-hv-s26-w26.ssim") as f:
+with open(arguments.ssim) as f:
     for line in f:
+        if line[0] == '2':
+            if line[1] != 'U':
+                print("SSIM data using local time is not supported yet!")
+                sys.exit(1)
+            feed_info = [{
+                "feed_publisher_name": "Transitous",
+                "feed_publisher_url": "https://transitous.org",
+                "feed_lang": "en",
+                "feed_start_date": parse_ssim_date(line[14:21]),
+                "feed_end_date": parse_ssim_date(line[21:28]),
+            }]
         if line[0] == '3':
             agency_id = line[128:131].strip() if line[128:131].strip() != "" else line[2:5].strip()
             add_agency(agency_id)
@@ -241,7 +290,7 @@ with open("af-kl-to-hv-s26-w26.ssim") as f:
                     "route_type": 1100,
                 }
             trip_id = line[2:12].replace(' ', '_')
-            calendar[trip_id] = {
+            calendar.append({
                 "service_id": trip_id,
                 "monday": 1 if line[28] == "1" else 0,
                 "tuesday": 1 if line[29] == "2" else 0,
@@ -250,73 +299,45 @@ with open("af-kl-to-hv-s26-w26.ssim") as f:
                 "friday": 1 if line[32] == "5" else 0,
                 "saturday": 1 if line[33] == "6" else 0,
                 "sunday": 1 if line[34] == "7" else 0,
-                "start_date": f"20{line[19:21]}{month_map[line[16:19]]}{line[14:16]}",
-                "end_date": f"20{line[26:28]}{month_map[line[23:26]]}{line[21:23]}",
-            }
-            trips[trip_id] = {
+                "start_date": parse_ssim_date(line[14:21]),
+                "end_date": parse_ssim_date(line[21:28]),
+            })
+            trips.append({
                 "route_id": route_id,
                 "service_id": trip_id,
                 "trip_id": trip_id,
                 "trip_headsign": stops[to_airport]["stop_name"] if to_airport in stops else None,  # TODO translations?
                 "trip_short_name": line[2:9],  # TODO normalize/clean
                 "cars_allowed": 2,
-            }
-            # TODO times need to be converted to UTC
+            })
+            # times need to be in UTC!
+            dep_time = (line[39:41], line[41:43])
+            arr_time = (line[61:63], line[63:65])
+            if arr_time < dep_time:
+                arr_time = (int(arr_time[0]) + 24, arr_time[1])
             stoptimes.append({
                 "trip_id": trip_id,
-                "arrival_time": f"{line[39:41]}:{line[41:43]}:00",
-                "departure_time": f"{line[39:41]}:{line[41:43]}:00",
+                "arrival_time": f"{dep_time[0]}:{dep_time[1]}:00",
+                "departure_time": f"{dep_time[0]}:{dep_time[1]}:00",
                 "stop_id": f"{from_airport}_{from_terminal}" if from_terminal != "" else from_airport,
                 "stop_sequence": 1,
             })
             stoptimes.append({
                 "trip_id": trip_id,
-                "arrival_time": f"{line[61:63]}:{line[63:65]}:00",
-                "departure_time": f"{line[61:63]}:{line[63:65]}:00",
+                "arrival_time": f"{arr_time[0]}:{arr_time[1]}:00",
+                "departure_time": f"{arr_time[0]}:{arr_time[1]}:00",
                 "stop_id": f"{to_airport}_{to_terminal}" if to_terminal != "" else to_airport,
                 "stop_sequence": 2,
             })
 
 
 # write GTFS
-with open("agency.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["agency_id", "agency_name", "agency_url", "agency_timezone", "agency_lang"])
-    writer.writeheader()
-    for (_, agency) in agencies.items():
-        writer.writerow(agency)
-
-with open("stops.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["stop_id", "stop_name", "stop_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url"])
-    writer.writeheader()
-    for (_, stop) in stops.items():
-        writer.writerow(stop)
-
-with open("routes.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["route_id", "agency_id", "route_short_name", "route_type"])
-    writer.writeheader()
-    for (_, route) in routes.items():
-        writer.writerow(route)
-
-with open("calendar.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date"])
-    writer.writeheader()
-    for (_, entry) in calendar.items():
-        writer.writerow(entry)
-
-with open("trips.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["route_id", "service_id", "trip_id", "trip_headsign", "trip_short_name", "cars_allowed"])
-    writer.writeheader()
-    for (_, trip) in trips.items():
-        writer.writerow(trip)
-
-with open("stop_times.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["trip_id", "departure_time", "arrival_time", "stop_id", "stop_sequence"])
-    writer.writeheader()
-    for entry in stoptimes:
-        writer.writerow(entry)
-
-with open("translations.txt", 'w') as f:
-    writer = csv.DictWriter(f, fieldnames=["table_name", "field_name", "language", "record_id", "translation"])
-    writer.writeheader()
-    for t in translations:
-        writer.writerow(t)
+with zipfile.ZipFile(arguments.out, 'w') as z:
+    write_gtfs_file(z, "agency.txt", agencies)
+    write_gtfs_file(z, "stops.txt", stops)
+    write_gtfs_file(z, "routes.txt", routes)
+    write_gtfs_file(z, "calendar.txt", calendar)
+    write_gtfs_file(z, "trips.txt", trips)
+    write_gtfs_file(z, "stop_times.txt", stoptimes)
+    write_gtfs_file(z, "translations.txt", translations)
+    write_gtfs_file(z, "feed_info.txt", feed_info)
