@@ -181,8 +181,8 @@ def add_stop(iata_code: str, terminal: str):
         return
     stops[f"{iata_code}_{terminal}"] = {
         "stop_id": f"{iata_code}_{terminal}",
-        "stop_name": f"{wikidata_airports[iata_code]["name"]["en"]} ({iata_code}) Terminal {terminal}" if "en" in wikidata_airports[iata_code]["name"] else iata_code,
-        "stop_code": terminal,
+        "stop_name": stops[iata_code]["stop_name"],
+        "platform_code": f"Terminal {terminal}",
         "stop_lat": wikidata_airports[iata_code]["lat"],  # TODO
         "stop_lon": wikidata_airports[iata_code]["lon"],  # TODO
         "location_type": 0,
@@ -198,13 +198,13 @@ def add_stop(iata_code: str, terminal: str):
             "field_name": "stop_name",
             "language": lang,
             "record_id": f"{iata_code}_{terminal}",
-            "translation": f"{name} ({iata_code}) Terminal {terminal}"
+            "translation": f"{name} ({iata_code})"
         })
 
 
 gtfs_columns = {
     "agency.txt": ["agency_id", "agency_name", "agency_url", "agency_timezone", "agency_lang"],
-    "stops.txt": ["stop_id", "stop_name", "stop_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url"],
+    "stops.txt": ["stop_id", "stop_name", "platform_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url"],
     "routes.txt": ["route_id", "agency_id", "route_short_name", "route_type"],
     "calendar.txt": ["service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date"],
     "trips.txt": ["route_id", "service_id", "trip_id", "trip_headsign", "trip_short_name", "cars_allowed"],
