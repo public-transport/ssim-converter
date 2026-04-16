@@ -43,6 +43,7 @@ def query_wikidata(sparql: str, cache_name: str):
         print(f"Reusing cached data for {cache_name}…")
         return json.load(open(cache_name, "r"))
 
+    print(f"Querying Wikidata for {cache_name}…")
     req = requests.get(f"https://query.wikidata.org/sparql?{urllib.parse.urlencode({
                         "query": sparql,
                         "format": "json",
