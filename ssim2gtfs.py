@@ -7,6 +7,7 @@ import argparse
 import csv
 import io
 import json
+import re
 import requests
 import os
 import sys
@@ -126,6 +127,21 @@ def parse_wikidata_terminals(data):
         })
 
 
+def find_terminal(iata_code: str, terminal: str):
+    for t in wikidata_terminals.get(iata_code, []):
+        if t["name"].lower().endswith(f"terminal {terminal}") or f"terminal {terminal} " in t["name"].lower():
+            return t
+    if len(terminal) == 1 and terminal[0].isalpha():
+        for t in wikidata_terminals.get(iata_code, []):
+            if re.search(f"(^|\\b){terminal}[a-z]+ terminal", t["name"], flags=re.IGNORECASE):
+                return t
+    if len(terminal) == 1 and terminal[0].isdecimal():
+        for t in wikidata_terminals.get(iata_code, []):
+            if t["name"].endswith(f"T{terminal}"):
+                return t
+    return None
+
+
 month_map = {
     "JAN": "01",
     "FEB": "02",
@@ -215,11 +231,9 @@ def add_stop(iata_code: str, terminal: str):
     terminal_code = f"{iata_code}_{terminal}"
     if terminal == "" or terminal_code in stops:
         return
-    wdt = None
-    for t in wikidata_terminals.get(iata_code, []):
-        if t["name"].lower().endswith(f"terminal {terminal}"):
-            wdt = t
-            break
+    wdt = find_terminal(iata_code, terminal)
+    if not wdt and len(terminal) == 2 and terminal[0].isdecimal() and terminal[1].isalpha():
+        wdt = find_terminal(iata_code, terminal[:1])
     if not wdt and iata_code in wikidata_terminals:
         print(f"No terminal data found for {iata_code} Terminal {terminal} despite terminal data being available")
     elif not wdt and terminal_code not in terminal_errors:
@@ -314,8 +328,8 @@ terminal_sparql = """
 SELECT ?item ?itemLabel ?iataCode ?coord
 WHERE
 {
-  ?item wdt:P31 wd:Q849706. # Must be a cat
-  ?item wdt:P361 ?airport.
+  ?item wdt:P31 wd:Q849706.
+  ?item (wdt:P361*) ?airport.
   ?airport wdt:P238 ?iataCode.
   ?item wdt:P625 ?coord.
   SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],mul,en". }
@@ -341,9 +355,9 @@ with open(arguments.ssim) as f:
             agency_id = line[128:131].strip() if line[128:131].strip() != "" else line[2:5].strip()
             add_agency(agency_id)
             from_airport = line[36:39]
-            from_terminal = line[52:53].strip()
+            from_terminal = line[52:54].strip()
             to_airport = line[54:57]
-            to_terminal = line[70:71].strip()
+            to_terminal = line[70:72].strip()
             add_stop(from_airport, from_terminal)
             add_stop(to_airport, to_terminal)
             if from_airport not in wikidata_airports or to_airport not in wikidata_airports or agency_id not in wikidata_airlines:
