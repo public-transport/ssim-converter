@@ -25,9 +25,11 @@ transfers = {}
 
 wikidata_airlines = {}
 wikidata_airports = {}
+wikidata_terminals = {}
 
 airline_errors = {}
 airport_errors = {}
+terminal_errors = {}
 
 
 parser = argparse.ArgumentParser(description='SSIM to GTFS converter.')
@@ -52,6 +54,11 @@ def query_wikidata(sparql: str, cache_name: str):
     return req.json()
 
 
+def parse_wikidata_id(data):
+    uri = data["item"]["value"]
+    return uri[uri.rfind("/")+1:]
+
+
 # TODO this gives us Cargo subsidiaries with the same IATA designator as well!
 def parse_wikidata_airlines(data):
     for a in data["results"]["bindings"]:
@@ -61,7 +68,8 @@ def parse_wikidata_airlines(data):
         if iata not in wikidata_airlines:
             wikidata_airlines[iata] = {
                 "name": {},
-                "url": a["url"]["value"] if "url" in a else None
+                "url": a["url"]["value"] if "url" in a else None,
+                "wikidata": parse_wikidata_id(a),
             }
         lang = a["label"]["xml:lang"]
         if len(lang) > 2 and lang[2] == "-":
@@ -94,12 +102,27 @@ def parse_wikidata_airports(data):
                 "url": a["url"]["value"] if "url" in a else None,
                 "tz": a["iana"]["value"],
                 "name": {},
+                "wikidata": parse_wikidata_id(a),
             }
         lang = a["label"]["xml:lang"]
         if len(lang) > 2 and lang[2] == "-":
             lang = lang[0:2]
         if len(lang) == 2:
             wikidata_airports[iata_code]["name"][lang] = a["label"]["value"]
+
+
+def parse_wikidata_terminals(data):
+    for t in data["results"]["bindings"]:
+        iata_code = t["iataCode"]["value"]
+        if iata_code not in wikidata_terminals:
+            wikidata_terminals[iata_code] = []
+        coord = parse_wikidata_coordinate(t["coord"]["value"])
+        wikidata_terminals[iata_code].append({
+            "name": t["itemLabel"]["value"],
+            "lon": coord[0],
+            "lat": coord[1],
+            "wikidata": parse_wikidata_id(t),
+        })
 
 
 month_map = {
@@ -138,6 +161,7 @@ def add_agency(airline_code: str):
         "agency_url": wd["url"],
         "agency_timezone": "Etc/UTC",
         "agency_lang": "en",  # our default for Wikidata content
+        "wikidata": wd["wikidata"],
     }
     for (lang, name) in wd["name"].items():
         if lang != "en" and wd["name"].get("en", "") == name:
@@ -158,18 +182,20 @@ def add_stop(iata_code: str, terminal: str):
         print(f"No Wikidata entry for airport {iata_code} found!")
         airport_errors[iata_code] = None
         return
+    wd = wikidata_airports[iata_code]
     if iata_code not in stops:
         stops[iata_code] = {
             "stop_id": iata_code,
-            "stop_name": f"{wikidata_airports[iata_code]["name"]["en"]} ({iata_code})" if "en" in wikidata_airports[iata_code]["name"] else iata_code,
-            "stop_lat": wikidata_airports[iata_code]["lat"],
-            "stop_lon": wikidata_airports[iata_code]["lon"],
+            "stop_name": f"{wd["name"]["en"]} ({iata_code})" if "en" in wd["name"] else iata_code,
+            "stop_lat": wd["lat"],
+            "stop_lon": wd["lon"],
             "location_type": 0,
-            "stop_timezone": wikidata_airports[iata_code]["tz"],
-            "stop_url": wikidata_airports[iata_code]["url"],
+            "stop_timezone": wd["tz"],
+            "stop_url": wd["url"],
+            "wikidata": wd["wikidata"],
         }
-        for (lang, name) in wikidata_airports[iata_code]["name"].items():
-            if lang != "en" and wikidata_airports[iata_code]["name"].get("en", "") == name:
+        for (lang, name) in wd["name"].items():
+            if lang != "en" and wd["name"].get("en", "") == name:
                 continue
             translations.append({
                 "table_name": "stops",
@@ -182,37 +208,55 @@ def add_stop(iata_code: str, terminal: str):
         transfers[iata_code] = {
             "from_stop_id": iata_code,
             "to_stop_id": iata_code,
-            "transfer_type": 0,
+            "transfer_type": 2,
             "min_transfer_time": 3600,
         }
-    if terminal == "" or f"{iata_code}_{terminal}" in stops:
+    terminal_code = f"{iata_code}_{terminal}"
+    if terminal == "" or terminal_code in stops:
         return
-    stops[f"{iata_code}_{terminal}"] = {
-        "stop_id": f"{iata_code}_{terminal}",
+    wdt = None
+    for t in wikidata_terminals.get(iata_code, []):
+        if t["name"].lower().endswith(f"terminal {terminal}"):
+            wdt = t
+            break
+    if not wdt and iata_code in wikidata_terminals:
+        print(f"No terminal data found for {iata_code} Terminal {terminal} despite terminal data being available")
+    elif not wdt and terminal_code not in terminal_errors:
+        terminal_errors[terminal_code] = None
+        print(f"No terminal data found for {iata_code} Terminal {terminal}")
+    stops[terminal_code] = {
+        "stop_id": terminal_code,
         "stop_name": stops[iata_code]["stop_name"],
         "platform_code": f"Terminal {terminal}",
-        "stop_lat": wikidata_airports[iata_code]["lat"],  # TODO
-        "stop_lon": wikidata_airports[iata_code]["lon"],  # TODO
+        "stop_lat": wdt["lat"] if wdt else wd["lat"],
+        "stop_lon": wdt["lon"] if wdt else wd["lon"],
         "location_type": 0,
         "parent_station": iata_code,
-        "stop_timezone": wikidata_airports[iata_code]["tz"],
+        "stop_timezone": wd["tz"],
+        "wikidata": wdt["wikidata"] if wdt else None,
+    }
+    transfers[terminal_code] = {
+        "from_stop_id": terminal_code,
+        "to_stop_id": terminal_code,
+        "transfer_type": 2,
+        "min_transfer_time": 3600,
     }
     stops[iata_code]["location_type"] = 1
-    for (lang, name) in wikidata_airports[iata_code]["name"].items():
-        if lang != "en" and wikidata_airports[iata_code]["name"].get("en", "") == name:
+    for (lang, name) in wd["name"].items():
+        if lang != "en" and wd["name"].get("en", "") == name:
             continue
         translations.append({
             "table_name": "stops",
             "field_name": "stop_name",
             "language": lang,
-            "record_id": f"{iata_code}_{terminal}",
+            "record_id": terminal_code,
             "translation": f"{name} ({iata_code})"
         })
 
 
 gtfs_columns = {
-    "agency.txt": ["agency_id", "agency_name", "agency_url", "agency_timezone", "agency_lang"],
-    "stops.txt": ["stop_id", "stop_name", "platform_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url"],
+    "agency.txt": ["agency_id", "agency_name", "agency_url", "agency_timezone", "agency_lang", "wikidata"],
+    "stops.txt": ["stop_id", "stop_name", "platform_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url", "wikidata"],
     "routes.txt": ["route_id", "agency_id", "route_short_name", "route_type"],
     "calendar.txt": ["service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date"],
     "trips.txt": ["route_id", "service_id", "trip_id", "trip_headsign", "trip_short_name", "cars_allowed"],
@@ -264,6 +308,19 @@ WHERE
 }
 """
 parse_wikidata_airports(query_wikidata(airport_sparql, "airports"))
+
+terminal_sparql = """
+SELECT ?item ?itemLabel ?iataCode ?coord
+WHERE
+{
+  ?item wdt:P31 wd:Q849706. # Must be a cat
+  ?item wdt:P361 ?airport.
+  ?airport wdt:P238 ?iataCode.
+  ?item wdt:P625 ?coord.
+  SERVICE wikibase:label { bd:serviceParam wikibase:language "[AUTO_LANGUAGE],mul,en". }
+}
+"""
+parse_wikidata_terminals(query_wikidata(terminal_sparql, "terminals"))
 
 
 with open(arguments.ssim) as f:
