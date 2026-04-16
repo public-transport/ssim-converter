@@ -30,7 +30,7 @@ jobs:
         uses: actions/configure-pages@v4
 
       - run: |
-          curl --user-agent org.transitous.ssim-converter https://www.data.gouv.fr/api/1/datasets/r/240d45de-fcff-42ed-9e97-5e351d032fea > AF-KL-TO-HV-S26-W26.ssim
+          curl -L --user-agent org.transitous.ssim-converter https://www.data.gouv.fr/api/1/datasets/r/240d45de-fcff-42ed-9e97-5e351d032fea > AF-KL-TO-HV-S26-W26.ssim
           ls -la AF-KL-TO-HV-S26-W26.ssim
           python3 ssim2gtfs.py --ssim AF-KL-TO-HV-S26-W26.ssim --out AF-KL-TO-HV-S26-W26.zip
 
