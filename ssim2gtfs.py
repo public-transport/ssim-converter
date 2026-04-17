@@ -373,7 +373,8 @@ with open(arguments.ssim) as f:
                 continue
             flight_number = line[2:9].replace('  ', ' ')
             route_id = line[2:9].replace(' ', '_')
-            trip_id = line[2:13].replace(' ', '_')
+            # flight designator + itinerary variation + leg sequence (ie. line[2:13]) is not unique in the AF/KLM dataset...
+            trip_id = line[194:200]
             if route_id not in routes:
                 routes[route_id] = {
                     "route_id": route_id,
