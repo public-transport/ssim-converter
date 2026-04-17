@@ -63,15 +63,24 @@ def parse_wikidata_id(data):
 
 # TODO this gives us Cargo subsidiaries with the same IATA designator as well!
 def parse_wikidata_airlines(data):
+    # in a first pass, try to identify cargo airlines that slipped through the Wikidata query filter
+    ignore = {}
     for a in data["results"]["bindings"]:
-        if "dissolved" in a:
+        if a["label"]["xml:lang"] != "en":
+            continue
+        if "Cargo" in a["label"]["value"]:
+            ignore[parse_wikidata_id(a)] = None
+
+    for a in data["results"]["bindings"]:
+        wd_id = parse_wikidata_id(a)
+        if wd_id in ignore:
             continue
         iata = a["iataCode"]["value"]
         if iata not in wikidata_airlines:
             wikidata_airlines[iata] = {
                 "name": {},
                 "url": a["url"]["value"] if "url" in a else None,
-                "wikidata": parse_wikidata_id(a),
+                "wikidata": wd_id,
             }
         lang = a["label"]["xml:lang"]
         if len(lang) > 2 and lang[2] == "-":
@@ -129,7 +138,7 @@ def parse_wikidata_terminals(data):
 
 def find_terminal(iata_code: str, terminal: str):
     for t in wikidata_terminals.get(iata_code, []):
-        if t["name"].lower().endswith(f"terminal {terminal}") or f"terminal {terminal} " in t["name"].lower():
+        if t["name"].lower().endswith(f"terminal {terminal.lower()}") or f"terminal {terminal.lower()} " in t["name"].lower():
             return t
     if len(terminal) == 1 and terminal[0].isalpha():
         for t in wikidata_terminals.get(iata_code, []):
@@ -274,7 +283,7 @@ gtfs_columns = {
     "stops.txt": ["stop_id", "stop_name", "platform_code", "stop_lat", "stop_lon", "location_type", "parent_station", "stop_timezone", "stop_url", "wikidata"],
     "routes.txt": ["route_id", "agency_id", "route_short_name", "route_type"],
     "calendar.txt": ["service_id", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "start_date", "end_date"],
-    "trips.txt": ["route_id", "service_id", "trip_id", "trip_headsign", "trip_short_name", "cars_allowed"],
+    "trips.txt": ["route_id", "service_id", "trip_id", "cars_allowed"],
     "stop_times.txt": ["trip_id", "departure_time", "arrival_time", "stop_id", "stop_sequence"],
     "translations.txt": ["table_name", "field_name", "language", "record_id", "translation"],
     "feed_info.txt": ["feed_publisher_name", "feed_publisher_url", "feed_lang", "feed_start_date", "feed_end_date"],
@@ -296,15 +305,15 @@ def write_gtfs_file(gtfs_zip, file_name: str, data):
 
 
 airline_sparql = """
-SELECT DISTINCT ?item ?iataCode ?icaoCode ?label ?url ?dissolved
+SELECT DISTINCT ?item ?iataCode ?icaoCode ?label ?url
 WHERE
 {
-  ?item (wdt:P31/wdt:P279*) wd:Q46970.
+  {?item wdt:P31 wd:Q46970} UNION {?item wdt:P31 wd:Q2440569}.
   ?item wdt:P229 ?iataCode.
   OPTIONAL { ?item wdt:P230 ?icaoCode }.
   ?item rdfs:label ?label.
-  OPTIONAL { ?item wdt:P576 ?dissolved }.
   OPTIONAL { ?item wdt:P856 ?url }.
+  FILTER NOT EXISTS {?item wdt:P576 ?dissolved }.
 }
 """
 parse_wikidata_airlines(query_wikidata(airline_sparql, "airlines"))
@@ -362,15 +371,16 @@ with open(arguments.ssim) as f:
             add_stop(to_airport, to_terminal)
             if from_airport not in wikidata_airports or to_airport not in wikidata_airports or agency_id not in wikidata_airlines:
                 continue
+            flight_number = line[2:9].replace('  ', ' ')
             route_id = line[2:9].replace(' ', '_')
+            trip_id = line[2:13].replace(' ', '_')
             if route_id not in routes:
                 routes[route_id] = {
                     "route_id": route_id,
                     "agency_id": agency_id,
-                    "route_short_name": f"{from_airport}-{to_airport}",
+                    "route_short_name": flight_number,
                     "route_type": 1100,
                 }
-            trip_id = line[2:12].replace(' ', '_')
             calendar.append({
                 "service_id": trip_id,
                 "monday": 1 if line[28] == "1" else 0,
@@ -387,8 +397,6 @@ with open(arguments.ssim) as f:
                 "route_id": route_id,
                 "service_id": trip_id,
                 "trip_id": trip_id,
-                "trip_headsign": stops[to_airport]["stop_name"] if to_airport in stops else None,  # TODO translations?
-                "trip_short_name": line[2:9],  # TODO normalize/clean
                 "cars_allowed": 2,
             })
             # times need to be in UTC!
