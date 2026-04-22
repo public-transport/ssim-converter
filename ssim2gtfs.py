@@ -28,6 +28,8 @@ wikidata_airlines = {}
 wikidata_airports = {}
 wikidata_terminals = {}
 
+kde_airports = {}
+
 airline_errors = {}
 airport_errors = {}
 terminal_errors = {}
@@ -152,6 +154,27 @@ def find_terminal(iata_code: str, terminal: str):
     return None
 
 
+# "improved" airport locations from KDE Itinerary
+# (uses OSM-based heuristics starting from an airport center coordinate to find the presumed "entrance")
+def load_kde_airport_coordinate(cache_name: str):
+    if os.path.exists(cache_name):
+        print(f"Reusing cached data for {cache_name}…")
+        return json.load(open(cache_name, "r"))
+
+    req = requests.get("https://invent.kde.org/pim/kitinerary/-/raw/master/src/lib/knowledgedb/airportdb_data.cpp",
+                       headers={"User-Agent": "org.transitous.ssim-converter (vkrause@kde.org)"})
+
+    kde_airports = {}
+    for line in req.text.split('\n'):
+        match = re.search(R"IataCode\{\"([A-Z]{3})\"\}, .*, Coordinate\{([\d\.-]+), ([\d\.-]+)\}", line)
+        if match:
+            kde_airports[match[1]] = [float(match[2]), float(match[3])]
+
+    with open(cache_name, "w") as f:
+        json.dump(kde_airports, f)
+    return kde_airports
+
+
 month_map = {
     "JAN": "01",
     "FEB": "02",
@@ -214,8 +237,8 @@ def add_stop(iata_code: str, terminal: str):
         stops[iata_code] = {
             "stop_id": iata_code,
             "stop_name": f"{wd["name"]["en"]} ({iata_code})" if "en" in wd["name"] else iata_code,
-            "stop_lat": wd["lat"],
-            "stop_lon": wd["lon"],
+            "stop_lat": kde_airports[iata_code][1] if iata_code in kde_airports else wd["lat"],
+            "stop_lon": kde_airports[iata_code][0] if iata_code in kde_airports else wd["lon"],
             "location_type": 0,
             "stop_timezone": wd["tz"],
             "stop_url": wd["url"],
@@ -253,8 +276,8 @@ def add_stop(iata_code: str, terminal: str):
         "stop_id": terminal_code,
         "stop_name": stops[iata_code]["stop_name"],
         "platform_code": f"Terminal {terminal}",
-        "stop_lat": wdt["lat"] if wdt else wd["lat"],
-        "stop_lon": wdt["lon"] if wdt else wd["lon"],
+        "stop_lat": wdt["lat"] if wdt else stops[iata_code]["stop_lat"],
+        "stop_lon": wdt["lon"] if wdt else stops[iata_code]["stop_lon"],
         "location_type": 0,
         "parent_station": iata_code,
         "stop_timezone": wd["tz"],
@@ -347,6 +370,7 @@ WHERE
 """
 parse_wikidata_terminals(query_wikidata(terminal_sparql, "terminals"))
 
+kde_airports = load_kde_airport_coordinate("kde_airports")
 
 with open(arguments.ssim) as f:
     for line in f:
