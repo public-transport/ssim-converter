@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<!--
+SPDX-FileCopyrightText: 2026 Volker Krause <vkrause@kde.org>
+SPDX-License-Identifier: AGPL-3.0-or-later
+-->
+<html lang="en">
+<head>
+    <title>SSIM Converter Airport Location Debug View</title>
+    <meta charset='utf-8'>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel='stylesheet' href='https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css' />
+    <script src='https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js'></script>
+    <style>
+        body { margin: 0; padding: 0; }
+        html, body, #map { height: 100%; }
+        .maplibregl-popup {
+            max-width: 500px;
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+<script>
+    const map = new maplibregl.Map({
+        container: 'map',
+        style: {
+            version: 8,
+            sources: {
+                bg: {
+                    attribution: '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap contributors</a>',
+                    type: 'raster',
+                    tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                    tileSize: 256,
+                    minzoom: 0,
+                    maxzoom: 19
+                },
+                airports: {
+                    type: 'geojson',
+                    data: 'airports.geojson'
+                }
+            },
+            layers: [
+                {
+                    id: 'background',
+                    type: 'raster',
+                    source: 'bg'
+                },
+                {
+                    id: 'airport-layer',
+                    type: 'circle',
+                    source: 'airports',
+                    paint: {
+                        'circle-color': 'red'
+                    }
+                }
+            ]
+        },
+        center: [0, 0],
+        zoom: 1
+    });
+
+    map.on('load', () => {
+        map.on('click', 'airport-layer', (e) => {
+            let features = e.features;
+            features = features.sort((lhs, rhs) => { return lhs.properties.name > rhs.properties.name; });
+            names = []
+            for (feature of features)
+                names.push(feature.properties.wikidata ? '<a href="https://www.wikidata.org/wiki/' + feature.properties.wikidata + '">' + feature.properties.name + '</a>' : feature.properties.name)
+
+            new maplibregl.Popup()
+                .setLngLat(e.lngLat)
+                .setHTML(names.join('<br/>'))
+                .addTo(map);
+        });
+
+        map.on('mouseenter', 'airport-layer', () => {
+            map.getCanvas().style.cursor = 'pointer';
+        });
+
+        map.on('mouseleave', 'airport-layer', () => {
+            map.getCanvas().style.cursor = '';
+        });
+    });
+</script>
+</body>
+</html>
