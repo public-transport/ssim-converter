@@ -35,7 +35,8 @@ terminal_errors = {}
 
 parser = argparse.ArgumentParser(description='SSIM to GTFS converter.')
 parser.add_argument('--ssim', required=True, help='Path to SSIM input file.')
-parser.add_argument('--out', required=True, help='Path to GTFS output file.')
+parser.add_argument('--out', help='Path to GTFS output file.')
+parser.add_argument('--geojson', help='Path to GeoJSON output for debugging airport positioning.')
 arguments = parser.parse_args()
 
 
@@ -422,13 +423,38 @@ with open(arguments.ssim) as f:
 
 
 # write GTFS
-with zipfile.ZipFile(arguments.out, 'w') as z:
-    write_gtfs_file(z, "agency.txt", agencies)
-    write_gtfs_file(z, "stops.txt", stops)
-    write_gtfs_file(z, "routes.txt", routes)
-    write_gtfs_file(z, "calendar.txt", calendar)
-    write_gtfs_file(z, "trips.txt", trips)
-    write_gtfs_file(z, "stop_times.txt", stoptimes)
-    write_gtfs_file(z, "translations.txt", translations)
-    write_gtfs_file(z, "feed_info.txt", feed_info)
-    write_gtfs_file(z, "transfers.txt", transfers)
+if arguments.out:
+    with zipfile.ZipFile(arguments.out, 'w') as z:
+        write_gtfs_file(z, "agency.txt", agencies)
+        write_gtfs_file(z, "stops.txt", stops)
+        write_gtfs_file(z, "routes.txt", routes)
+        write_gtfs_file(z, "calendar.txt", calendar)
+        write_gtfs_file(z, "trips.txt", trips)
+        write_gtfs_file(z, "stop_times.txt", stoptimes)
+        write_gtfs_file(z, "translations.txt", translations)
+        write_gtfs_file(z, "feed_info.txt", feed_info)
+        write_gtfs_file(z, "transfers.txt", transfers)
+
+# write GeoJSON for stop postion debugging
+if arguments.geojson:
+    features = []
+    for (_, stop) in stops.items():
+        feature = {
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [stop["stop_lon"], stop["stop_lat"]],
+            },
+            "properties": {
+                "name": stop["stop_id"],
+                "wikidata": stop["wikidata"],
+            }
+        }
+        features.append(feature)
+
+    geojson = {
+        "type": "FeatureCollection",
+        "features": features
+    }
+    with open(arguments.geojson, 'w') as f:
+        json.dump(geojson, f)
