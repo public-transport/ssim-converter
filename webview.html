@@ -64,8 +64,12 @@ SPDX-License-Identifier: AGPL-3.0-or-later
             let features = e.features;
             features = features.sort((lhs, rhs) => { return lhs.properties.name > rhs.properties.name; });
             names = []
-            for (feature of features)
-                names.push(feature.properties.wikidata ? '<a href="https://www.wikidata.org/wiki/' + feature.properties.wikidata + '">' + feature.properties.name + '</a>' : feature.properties.name)
+            for (feature of features) {
+                let label = feature.properties.wikidata ? '<a href="https://www.wikidata.org/wiki/' + feature.properties.wikidata + '">' + feature.properties.name + '</a>' : feature.properties.name
+                if (feature.properties.trip_count)
+                    label += " (" + feature.properties.trip_count + ")"
+                names.push(label)
+            }
 
             new maplibregl.Popup()
                 .setLngLat(e.lngLat)

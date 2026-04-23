@@ -461,6 +461,10 @@ if arguments.out:
 
 # write GeoJSON for stop postion debugging
 if arguments.geojson:
+    stop_times_count = {}
+    for st in stoptimes:
+        stop_times_count[st["stop_id"]] = stop_times_count.get(st["stop_id"], 0) + 1
+
     features = []
     for (_, stop) in stops.items():
         feature = {
@@ -472,6 +476,7 @@ if arguments.geojson:
             "properties": {
                 "name": stop["stop_id"],
                 "wikidata": stop["wikidata"],
+                "trip_count": stop_times_count.get(stop["stop_id"], 0),
             }
         }
         features.append(feature)
